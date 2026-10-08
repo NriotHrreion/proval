@@ -18,12 +18,15 @@
 
     interface Props {
         mode: "create" | "edit";
+        authMethod?: "apiKey" | "openaiOauth" | "xaiOauth";
         modelProviderId?: number;
         initialData?: Pick<ModelProviderResponse, "provider" | "label" | "baseUrl" | "timeoutSecond">;
         border?: boolean;
     }
 
-    const { mode, modelProviderId, initialData, border = true }: Props = $props();
+    const { mode, authMethod = "apiKey", modelProviderId, initialData, border = true }: Props = $props();
+
+    const isOauth = $derived(mode === "create" && authMethod !== "apiKey");
 
     let provider = $state<LlmApiProvider>(initialData?.provider ?? "openai");
     let label = $state(initialData?.label ?? "");
@@ -38,6 +41,7 @@
 
     async function handleSubmit(e: Event) {
         e.preventDefault();
+        if (isOauth) return;
         if (!label) {
             await openAlert("Display Name is required");
             return;
@@ -200,42 +204,48 @@
     <Card {border} spaceY>
         <FormField label="Display Name" description="A label for this LLM connection">
             {#snippet children({ id })}
-                <InputText {id} name="label" placeholder="OpenRouter Production" bind:value={label} />
+                <InputText
+                    {id}
+                    name="label"
+                    placeholder={isOauth ? (authMethod === "openaiOauth" ? "OpenAI" : "Xai") : "OpenRouter Production"}
+                    bind:value={label} />
             {/snippet}
         </FormField>
 
-        <FormField
-            label="API Provider"
-            description="LLM API provider (e.g. OpenAI compatible, Ollama)"
-            linkLabelToControl={false}
-            upper>
-            {#snippet children({ id: _id })}
-                <div class="grid grid-cols-2 gap-2" id={_id} role="group">
-                    {#each apiProviderToggleButtonValueList as toggleButtonValue}
-                        <ToggleButton
-                            class="h-full w-full"
-                            label={toggleButtonValue.label}
-                            description={toggleButtonValue.description}
-                            icon={toggleButtonValue.icon}
-                            selected={provider === toggleButtonValue.value}
-                            onclick={() => (provider = toggleButtonValue.value)} />
-                    {/each}
-                </div>
-            {/snippet}
-        </FormField>
-
-        <FormField label="Base URL" description="Server host for the LLM API">
-            {#snippet children({ id })}
-                <InputText {id} placeholder="https://openrouter.ai/api/v1" bind:value={baseUrl} />
-            {/snippet}
-        </FormField>
-
-        {#if mode === "create"}
-            <FormField label="API Key" description="Required when creating a model provider">
-                {#snippet children({ id })}
-                    <InputText {id} placeholder="sk-..." bind:value={apiKey} password />
+        {#if !isOauth}
+            <FormField
+                label="API Provider"
+                description="LLM API provider (e.g. OpenAI compatible, Ollama)"
+                linkLabelToControl={false}
+                upper>
+                {#snippet children({ id: _id })}
+                    <div class="grid grid-cols-2 gap-2" id={_id} role="group">
+                        {#each apiProviderToggleButtonValueList as toggleButtonValue}
+                            <ToggleButton
+                                class="h-full w-full"
+                                label={toggleButtonValue.label}
+                                description={toggleButtonValue.description}
+                                icon={toggleButtonValue.icon}
+                                selected={provider === toggleButtonValue.value}
+                                onclick={() => (provider = toggleButtonValue.value)} />
+                        {/each}
+                    </div>
                 {/snippet}
             </FormField>
+
+            <FormField label="Base URL" description="Server host for the LLM API">
+                {#snippet children({ id })}
+                    <InputText {id} placeholder="https://openrouter.ai/api/v1" bind:value={baseUrl} />
+                {/snippet}
+            </FormField>
+
+            {#if mode === "create"}
+                <FormField label="API Key" description="Required when creating a model provider">
+                    {#snippet children({ id })}
+                        <InputText {id} placeholder="sk-..." bind:value={apiKey} password />
+                    {/snippet}
+                </FormField>
+            {/if}
         {/if}
 
         <FormField
@@ -256,9 +266,13 @@
     </Card>
     <div class="flex justify-between gap-3 pt-2">
         <div class="flex gap-3 text-sm">
-            <Button primary type="submit">{mode === "create" ? "Create" : "Save"}</Button>
-            {#if mode === "create"}
-                <Button text class="whitespace-nowrap" onclick={openTestModal} type="button">Test Connection</Button>
+            {#if isOauth}
+                <Button primary type="button">{authMethod === "openaiOauth" ? "Auth with OpenAI" : "Auth with Xai"}</Button>
+            {:else}
+                <Button primary type="submit">{mode === "create" ? "Create" : "Save"}</Button>
+                {#if mode === "create"}
+                    <Button text class="whitespace-nowrap" onclick={openTestModal} type="button">Test Connection</Button>
+                {/if}
             {/if}
         </div>
         <div>
@@ -286,7 +300,7 @@
     </Modal>
 {/if}
 
-{#if mode === "create"}
+{#if mode === "create" && !isOauth}
     <Modal bind:open={testModalOpen} class="max-w-lg">
         <div class="space-y-4">
             <FieldTitle>Test connection</FieldTitle>
