@@ -96,7 +96,7 @@ export const verifyModelProviderConfig: Handler = async (c: Context) => {
     const service = new ModelProviderService();
     const body = await c.req.json();
 
-    const { provider, baseUrl, modelName, apiKey } = body;
+    const { provider, baseUrl, modelName, apiKey, timeoutSecond = 600 } = body;
     if (!baseUrl) {
         return c.json({ error: "Base URL is required for verification" }, 400);
     }
@@ -106,13 +106,18 @@ export const verifyModelProviderConfig: Handler = async (c: Context) => {
     if (!modelName) {
         return c.json({ error: "Model name is required for verification" }, 400);
     }
-    if (provider !== "anthropic" && provider !== "openai") {
+    if (provider !== "anthropic" && provider !== "openai" && provider !== "openai_responses") {
         return c.json({ error: "Invalid provider" }, 400);
+    }
+    if (invalidTimeoutSecond(timeoutSecond)) {
+        return c.json({ error: "Timeout must be an integer between 10 and 7200 seconds" }, 400);
     }
 
     try {
         if (provider === "anthropic") {
             await service.verifyAnthropicApi(baseUrl, modelName, apiKey);
+        } else if (provider === "openai_responses") {
+            await service.verifyOpenAiResponsesApi(baseUrl, modelName, apiKey, timeoutSecond);
         } else {
             await service.verifyOpenAiApi(baseUrl, modelName, apiKey);
         }

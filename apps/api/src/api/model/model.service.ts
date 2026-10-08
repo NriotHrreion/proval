@@ -12,6 +12,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { log } from "../../util/log.js";
 import { decrypt, encrypt } from "../../util/encrypt.js";
+import { createSender } from "../../agent/llm/factory.js";
 
 export class ModelProviderService {
     public async findAll(): Promise<ModelProvider[]> {
@@ -126,6 +127,23 @@ export class ModelProviderService {
             max_tokens: 1,
             messages: [{ role: "user", content: "Hello" }],
         });
+        log("API key is valid", "Model Provider API Verification");
+    }
+
+    public async verifyOpenAiResponsesApi(
+        baseUrl: string,
+        modelName: string,
+        apiKey: string,
+        timeoutSecond: number,
+    ): Promise<void> {
+        const sender = createSender({
+            provider: "openai_responses",
+            baseURL: baseUrl,
+            model: modelName,
+            apiKey,
+            timeoutSecond,
+        });
+        await sender.send([{ role: "user", content: "Hello" }], []);
         log("API key is valid", "Model Provider API Verification");
     }
 }

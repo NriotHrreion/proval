@@ -1,6 +1,7 @@
 import type { ReasoningEffort } from "@proval/types";
 import type { LlmSender } from "./loop.js";
 import { createOpenAiSender } from "./openai.js";
+import { createOpenAiResponsesSender } from "./openai-responses.js";
 import { createAnthropicSender } from "./anthropic.js";
 
 export interface SenderConfig {
@@ -31,6 +32,8 @@ function createLLMFetch() {
 export function createSender(config: SenderConfig): LlmSender {
     const fetch = createLLMFetch();
     switch (config.provider) {
+        case "openai_responses":
+            return createOpenAiResponsesSender({ ...config, fetch });
         case "anthropic":
             return createAnthropicSender({ ...config, fetch });
         case "openai":
