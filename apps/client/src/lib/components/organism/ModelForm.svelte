@@ -207,7 +207,7 @@
                 <InputText
                     {id}
                     name="label"
-                    placeholder={isOauth ? (authMethod === "openaiOauth" ? "OpenAI" : "Xai") : "OpenRouter Production"}
+                    placeholder={isOauth ? (authMethod === "openaiOauth" ? "OpenAI" : "xAI") : "OpenRouter Production"}
                     bind:value={label} />
             {/snippet}
         </FormField>
@@ -267,7 +267,7 @@
     <div class="flex justify-between gap-3 pt-2">
         <div class="flex gap-3 text-sm">
             {#if isOauth}
-                <Button primary type="button">{authMethod === "openaiOauth" ? "Auth with OpenAI" : "Auth with Xai"}</Button>
+                <Button primary type="button">{authMethod === "openaiOauth" ? "Auth with OpenAI" : "Auth with xAI"}</Button>
             {:else}
                 <Button primary type="submit">{mode === "create" ? "Create" : "Save"}</Button>
                 {#if mode === "create"}
