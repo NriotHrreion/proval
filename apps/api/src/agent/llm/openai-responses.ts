@@ -8,6 +8,7 @@ export function createOpenAiResponsesSender(config: SenderSDKConfig): LlmSender 
         baseURL: config.baseURL,
         timeout: config.timeoutSecond * 1000,
         fetch: config.fetch,
+        maxRetries: config.maxRetries,
     });
 
     return {
@@ -25,6 +26,7 @@ export function createOpenAiResponsesSender(config: SenderSDKConfig): LlmSender 
                         store: false,
                         stream: true,
                         include: ["reasoning.encrypted_content"],
+                        ...(config.maxOutputToken !== undefined ? { max_output_tokens: config.maxOutputToken } : {}),
                         ...(toolList.length > 0
                             ? {
                                   tools: toolList.map((tool) => ({
@@ -63,6 +65,12 @@ export function createOpenAiResponsesSender(config: SenderSDKConfig): LlmSender 
                         );
                     }
                     if (event.type === "response.incomplete") {
+                        if (
+                            config.maxOutputToken !== undefined &&
+                            event.response.incomplete_details?.reason === "max_output_tokens"
+                        ) {
+                            return { ...convertFromOpenAiResponse(event.response), finishReason: "length" };
+                        }
                         throw new Error(
                             `OpenAI Responses generation incomplete (${event.response.incomplete_details?.reason ?? "unknown"})`,
                         );

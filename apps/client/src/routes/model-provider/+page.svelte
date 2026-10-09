@@ -3,7 +3,7 @@
     import Badge from "$lib/components/atom/Badge.svelte";
     import Button from "$lib/components/atom/Button.svelte";
     import Modal from "$lib/components/atom/Modal.svelte";
-    import { KeyIcon, OpenAiLogoIcon, PlusIcon } from "phosphor-svelte";
+    import { KeyIcon, PlusIcon } from "phosphor-svelte";
     import { modelProviderLabel, truncateUrl } from "$lib/utils/label";
     import type { PageProps } from "./$types";
     import DefaultLayout from "$lib/components/layout/DefaultLayout.svelte";
@@ -41,7 +41,16 @@
                     </div>
                 {/snippet}
                 {#snippet badge()}
-                    <Badge variant="primary">{modelProviderLabel(modelProvider.provider)}</Badge>
+                    <Badge variant="primary"
+                        >{modelProvider.authMethod === "xai_oauth"
+                            ? "xAI OAuth"
+                            : modelProviderLabel(modelProvider.provider)}</Badge>
+                    {#if modelProvider.authMethod === "xai_oauth"}
+                        <Badge variant="neutral"
+                            >{modelProvider.oauthStatus === "reauthorization_required"
+                                ? "Reconnect required"
+                                : "Authorized"}</Badge>
+                    {/if}
                     <Badge variant="neutral">{truncateUrl(modelProvider.baseUrl)}</Badge>
                 {/snippet}
                 <ResourceCard href="/model-provider/{modelProvider.id}" {header} {badge} />
@@ -58,10 +67,6 @@
             <Button secondary href="/model-provider/create/api-key" class="w-full justify-start gap-2">
                 <KeyIcon class="size-4 shrink-0" aria-hidden="true" />
                 API Key
-            </Button>
-            <Button secondary href="/model-provider/create/openai-oauth" class="w-full justify-start gap-2">
-                <OpenAiLogoIcon class="size-4 shrink-0" aria-hidden="true" />
-                OpenAI OAuth
             </Button>
             <Button secondary href="/model-provider/create/xai-oauth" class="w-full justify-start gap-2">
                 <svg class="size-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

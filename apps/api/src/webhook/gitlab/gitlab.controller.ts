@@ -15,7 +15,7 @@ import { isBotMentioned, shouldSkipReplyWithoutMention } from "../../util/mentio
 import { skipIfInsufficientAccess } from "../../util/webhook-controller.js";
 import { runWithActivity } from "../../api/activity/activity.runner.js";
 import { ActivityService } from "../../api/activity/activity.service.js";
-import { createSender } from "../../agent/llm/factory.js";
+import { createModelProviderSender } from "../../api/model/model.service.js";
 import { runPullRequestReply, runPullRequestReview } from "../../agent/pull-request";
 import { runIssueReplyOnOpen, runIssueReply } from "../../agent/issue";
 import { Workspace } from "../../git-provider/workspace.js";
@@ -176,14 +176,7 @@ const handleGitLabPullRequestWebhook: HandleGitLabPullRequestWebhook = async (
     }
     const isFollowUpReview = hasCompleted;
 
-    const llmSender = createSender({
-        provider: modelProvider.provider,
-        apiKey: modelProvider.apiKey,
-        baseURL: modelProvider.baseUrl,
-        model: repository.modelName,
-        timeoutSecond: modelProvider.timeoutSecond,
-        reasoningEffort: repository.reasoningEffort,
-    });
+    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
 
     const isInlineReview = repository.prInlineReview;
 
@@ -287,14 +280,7 @@ const handleGitLabPullRequestNoteWebhook: HandleGitLabPullRequestNoteWebhook = a
 
     const prIid = payload.merge_request.iid;
 
-    const llmSender = createSender({
-        provider: modelProvider.provider,
-        apiKey: modelProvider.apiKey,
-        baseURL: modelProvider.baseUrl,
-        model: repository.modelName,
-        timeoutSecond: modelProvider.timeoutSecond,
-        reasoningEffort: repository.reasoningEffort,
-    });
+    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
 
     const inlineReviewId = payload.object_attributes.discussion_id ?? null;
 
@@ -370,14 +356,7 @@ const handleGitLabIssueWebhook: HandleGitLabIssueWebhook = async (payload, repos
     );
     if (accessSkip) return accessSkip;
 
-    const llmSender = createSender({
-        provider: modelProvider.provider,
-        apiKey: modelProvider.apiKey,
-        baseURL: modelProvider.baseUrl,
-        model: repository.modelName,
-        timeoutSecond: modelProvider.timeoutSecond,
-        reasoningEffort: repository.reasoningEffort,
-    });
+    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
 
     const workspace = new Workspace(gitlabProvider);
     runWithActivity(
@@ -473,14 +452,7 @@ const handleGitLabIssueNoteWebhook: HandleGitLabIssueNoteWebhook = async (
     );
     if (accessSkip) return accessSkip;
 
-    const llmSender = createSender({
-        provider: modelProvider.provider,
-        apiKey: modelProvider.apiKey,
-        baseURL: modelProvider.baseUrl,
-        model: repository.modelName,
-        timeoutSecond: modelProvider.timeoutSecond,
-        reasoningEffort: repository.reasoningEffort,
-    });
+    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
 
     const workspace = new Workspace(gitlabProvider);
     runWithActivity(
