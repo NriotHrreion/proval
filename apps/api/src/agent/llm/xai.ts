@@ -91,7 +91,6 @@ export function createXaiSender(config: XaiSenderConfig): LlmSender {
         apiKey: "oauth",
         baseURL: xaiBaseUrl,
         fetch: createXaiFetch(config),
-        maxRetries: 0,
     });
 
     return {
@@ -112,7 +111,6 @@ export async function getXaiModelList(config: XaiConnectionConfig): Promise<{ id
         baseURL: xaiBaseUrl,
         timeout: config.timeoutSecond * 1000,
         fetch: createXaiFetch(config),
-        maxRetries: 0,
     });
 
     try {
