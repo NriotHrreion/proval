@@ -176,8 +176,6 @@ const handleGitLabPullRequestWebhook: HandleGitLabPullRequestWebhook = async (
     }
     const isFollowUpReview = hasCompleted;
 
-    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
-
     const isInlineReview = repository.prInlineReview;
 
     const workspace = new Workspace(gitlabProvider);
@@ -194,7 +192,7 @@ const handleGitLabPullRequestWebhook: HandleGitLabPullRequestWebhook = async (
             runPullRequestReview({
                 provider: gitlabProvider,
                 workspace,
-                llmSender,
+                llmSender: createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort),
                 prIid,
                 isInlineReview,
                 language: repository.language,
@@ -280,8 +278,6 @@ const handleGitLabPullRequestNoteWebhook: HandleGitLabPullRequestNoteWebhook = a
 
     const prIid = payload.merge_request.iid;
 
-    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
-
     const inlineReviewId = payload.object_attributes.discussion_id ?? null;
 
     const workspace = new Workspace(gitlabProvider);
@@ -297,7 +293,7 @@ const handleGitLabPullRequestNoteWebhook: HandleGitLabPullRequestNoteWebhook = a
             runPullRequestReply({
                 provider: gitlabProvider,
                 workspace,
-                llmSender,
+                llmSender: createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort),
                 prIid,
                 commentId,
                 inlineReviewId: isInlineReviewComment ? inlineReviewId : null,
@@ -356,8 +352,6 @@ const handleGitLabIssueWebhook: HandleGitLabIssueWebhook = async (payload, repos
     );
     if (accessSkip) return accessSkip;
 
-    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
-
     const workspace = new Workspace(gitlabProvider);
     runWithActivity(
         {
@@ -371,7 +365,7 @@ const handleGitLabIssueWebhook: HandleGitLabIssueWebhook = async (payload, repos
             runIssueReplyOnOpen({
                 provider: gitlabProvider,
                 workspace,
-                llmSender,
+                llmSender: createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort),
                 issueIid,
                 language: repository.language,
                 issueLabelOnOpenEnabled: repository.issueLabelOnOpenEnabled,
@@ -452,8 +446,6 @@ const handleGitLabIssueNoteWebhook: HandleGitLabIssueNoteWebhook = async (
     );
     if (accessSkip) return accessSkip;
 
-    const llmSender = createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort);
-
     const workspace = new Workspace(gitlabProvider);
     runWithActivity(
         {
@@ -467,7 +459,7 @@ const handleGitLabIssueNoteWebhook: HandleGitLabIssueNoteWebhook = async (
             runIssueReply({
                 provider: gitlabProvider,
                 workspace,
-                llmSender,
+                llmSender: createModelProviderSender(modelProvider, repository.modelName, repository.reasoningEffort),
                 issueIid,
                 commentId,
                 language: repository.language,
