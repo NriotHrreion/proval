@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { log, logError } from "../util/log.js";
 import type { GitChangedFile, GitDiff, GitProvider, GitTree } from "./types.js";
@@ -301,9 +301,19 @@ export class Workspace {
             }));
     }
 
-    public async read(relPath: string): Promise<string> {
+    public async read(relPath: string, option: { regularFileOnly?: boolean } = {}): Promise<string> {
         const abs = this.safePath(relPath);
         try {
+            if (option.regularFileOnly) {
+                const [stat, root, target] = await Promise.all([
+                    lstat(abs),
+                    realpath(this.safePath("")),
+                    realpath(abs),
+                ]);
+                if (!stat.isFile() || !target.startsWith(root + sep)) {
+                    throw new Error("Not a regular workspace file");
+                }
+            }
             return await readFile(abs, "utf-8");
         } catch {
             throw new Error(`File not found: ${relPath}`);
