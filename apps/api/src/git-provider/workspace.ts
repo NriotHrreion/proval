@@ -1,3 +1,4 @@
+import { createReadStream } from "node:fs";
 import { lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { log, logError } from "../util/log.js";
@@ -14,6 +15,11 @@ export type WorkspaceVersion = {
     startSha?: string | null;
     baseSha?: string | null;
     previousSha?: string | null;
+};
+
+type WorkspaceReadOption = {
+    regularFileOnly?: boolean;
+    maxCharacterCount?: number;
 };
 
 export type WorkspaceDiffAgainst = "start" | "base";
@@ -301,8 +307,16 @@ export class Workspace {
             }));
     }
 
-    public async read(relPath: string, option: { regularFileOnly?: boolean } = {}): Promise<string> {
+    public async read(
+        relPath: string,
+        option: WorkspaceReadOption = {},
+    ): Promise<string> {
         const abs = this.safePath(relPath);
+        const { maxCharacterCount } = option;
+        if (maxCharacterCount !== undefined && (!Number.isSafeInteger(maxCharacterCount) || maxCharacterCount < 0)) {
+            throw new RangeError("Character limit must be a nonnegative safe integer");
+        }
+
         try {
             if (option.regularFileOnly) {
                 const [stat, root, target] = await Promise.all([
@@ -314,6 +328,22 @@ export class Workspace {
                     throw new Error("Not a regular workspace file");
                 }
             }
+
+            if (maxCharacterCount !== undefined) {
+                if (maxCharacterCount === 0) return "";
+                
+                const stream = createReadStream(abs, {
+                    encoding: "utf8",
+                    highWaterMark: Math.min(4096, maxCharacterCount),
+                });
+                let content = "";
+                for await (const chunk of stream) {
+                    content += String(chunk).slice(0, maxCharacterCount - content.length);
+                    if (content.length === maxCharacterCount) break;
+                }
+                return content;
+            }
+
             return await readFile(abs, "utf-8");
         } catch {
             throw new Error(`File not found: ${relPath}`);

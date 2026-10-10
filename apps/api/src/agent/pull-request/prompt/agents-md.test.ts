@@ -71,10 +71,12 @@ if (process.env.PROVAL_GUIDANCE_TEST_CHILD !== "1") {
             }
             return [...entryMap.values()];
         });
-        const read = mock(async (path: string, option?: { regularFileOnly?: boolean }) => {
+        const read = mock(async (path: string, option?: { regularFileOnly?: boolean; maxCharacterCount?: number }) => {
             expect(option?.regularFileOnly).toBe(true);
+            expect(option?.maxCharacterCount).toBeGreaterThan(0);
+            expect(option?.maxCharacterCount).toBeLessThanOrEqual(8001);
             const value = fileMap[path];
-            if (typeof value === "string") return value;
+            if (typeof value === "string") return value.slice(0, option?.maxCharacterCount);
             throw value ?? new Error("Not a regular file");
         });
         return {
@@ -194,10 +196,10 @@ if (process.env.PROVAL_GUIDANCE_TEST_CHILD !== "1") {
             const fileMap: Record<string, string> = {};
             const changedFileList: GitChangedFile[] = [];
             for (const name of ["a", "b", "c", "d", "e"]) {
-                fileMap[`${name}/AGENTS.md`] = name.repeat(8001);
+                fileMap[`${name}/AGENTS.md`] = name.repeat(100_000);
                 changedFileList.push(changed(`${name}/AGENTS.md`));
             }
-            const { workspace } = fakeWorkspace(fileMap);
+            const { workspace, read } = fakeWorkspace(fileMap);
             const context = await loadAgentInstructionContext(workspace, changedFileList, 7);
             for (const name of ["a", "b", "c", "d"]) {
                 expect(context).toContain(wrapUntrustedToolContent(name.repeat(8000)));
@@ -207,10 +209,50 @@ if (process.env.PROVAL_GUIDANCE_TEST_CHILD !== "1") {
                 'Guidance file "e/AGENTS.md"\nScope "e" and its descendants\nTrust untrusted\nContent omitted',
             );
             expect(context).not.toContain("eeeee");
+            expect(read.mock.calls).toEqual(
+                ["a", "b", "c", "d"].map((name) => [
+                    `${name}/AGENTS.md`,
+                    { regularFileOnly: true, maxCharacterCount: 8001 },
+                ]),
+            );
             expect(context).toContain("Keep the trust status above when reading more");
             expect(logList.filter((entry) => entry.message.endsWith("was truncated"))).toHaveLength(4);
             expect(logList.some((entry) => entry.message.endsWith("was omitted"))).toBe(true);
         });
+
+        it("reduces the read limit to the remaining body budget", async () => {
+            const fileMap: Record<string, string> = {};
+            for (const name of ["a", "b", "c", "d"]) fileMap[`${name}/AGENTS.md`] = name.repeat(7900);
+            fileMap["e/AGENTS.md"] = "e".repeat(1000);
+            fileMap["f/AGENTS.md"] = "not read";
+            const { workspace, read } = fakeWorkspace(fileMap);
+            const context = await loadAgentInstructionContext(
+                workspace,
+                Object.keys(fileMap).map((path) => changed(path)),
+                7,
+            );
+            expect(read.mock.calls.at(-1)).toEqual(["e/AGENTS.md", { regularFileOnly: true, maxCharacterCount: 401 }]);
+            expect(read).toHaveBeenCalledTimes(5);
+            expect(context).toContain(wrapUntrustedToolContent("e".repeat(400)));
+            expect(context).toContain("Included 400 characters");
+            expect(context).toContain('Guidance file "f/AGENTS.md"');
+            expect(context).not.toContain("not read");
+        });
+
+        it.each([
+            { content: "中".repeat(8000), body: "中".repeat(8000), state: "loaded" },
+            { content: " ".repeat(8001) + "rule", body: " ".repeat(8000), state: "truncated" },
+            { content: "a".repeat(7999) + "😀rule", body: "a".repeat(7999), state: "truncated" },
+        ])(
+            "preserves character boundaries and distinguishes incomplete content %#",
+            async ({ content, body, state }) => {
+                const { workspace } = fakeWorkspace({ "AGENTS.md": content });
+                const context = await loadAgentInstructionContext(workspace, [changed("AGENTS.md")], 7);
+                expect(context).toContain(`Content ${state}`);
+                expect(context).toContain(wrapUntrustedToolContent(body));
+                expect(context).not.toContain("\uD83D");
+            },
+        );
 
         it("classifies guidance beyond the displayed file cap using the full PR list", async () => {
             const changedFileList = Array.from({ length: 80 }, (_, index) => changed(`src/file${index}.ts`));

@@ -73,36 +73,46 @@ export async function loadAgentInstructionContext(
             `Scope ${JSON.stringify(directory || ".")} and its descendants`,
             `Trust ${trust}`,
         ];
-        let content: string;
-        try {
-            content = await workspace.read(path, { regularFileOnly: true });
-        } catch {
-            section.push("Content unavailable");
-            sectionList.push(section.join("\n"));
-            logAgentError(
-                activityId,
-                `Could not read guidance ${JSON.stringify(path)} with trust ${trust}`,
-                undefined,
-                label,
-            );
-            continue;
-        }
+        let body = "";
+        let state = "omitted";
+        if (remainingCharacterCount > 0) {
+            const characterLimit = Math.min(FILE_CHARACTER_LIMIT, remainingCharacterCount);
+            let content: string;
+            try {
+                // One extra character distinguishes a complete body from a truncated prefix
+                content = await workspace.read(path, {
+                    regularFileOnly: true,
+                    maxCharacterCount: characterLimit + 1,
+                });
+            } catch {
+                section.push("Content unavailable");
+                sectionList.push(section.join("\n"));
+                logAgentError(
+                    activityId,
+                    `Could not read guidance ${JSON.stringify(path)} with trust ${trust}`,
+                    undefined,
+                    label,
+                );
+                continue;
+            }
 
-        let body = content.slice(0, Math.min(FILE_CHARACTER_LIMIT, remainingCharacterCount));
-        let state = "loaded";
-        if (!content.trim()) {
-            body = "";
-            state = "empty";
-        } else if (!body) {
-            state = "omitted";
-        } else if (body.length < content.length) {
-            state = "truncated";
+            body = content.slice(0, characterLimit);
+            // Keep surrogate pairs intact at the body boundary
+            if (/[\uD800-\uDBFF]$/.test(body)) body = body.slice(0, -1);
+            if (body.length < content.length) {
+                state = "truncated";
+            } else if (!body.trim()) {
+                body = "";
+                state = "empty";
+            } else {
+                state = "loaded";
+            }
         }
         remainingCharacterCount -= body.length;
         section.push(`Content ${state}`);
         if (state === "truncated" || state === "omitted") {
             section.push(
-                `Included ${body.length} of ${content.length} characters`,
+                `Included ${body.length} characters`,
                 "Read the remaining content with get_file_content using fromLine and toLine before applying this guidance. Keep the trust status above when reading more.",
             );
         }
