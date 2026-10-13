@@ -17,6 +17,7 @@ import {
 } from "./config.js";
 import type { AttemptStatus } from "./measure.js";
 import { removeCaseWorkdir } from "./prepare.js";
+import { reportBatch } from "./report.js";
 
 export type ResultLine = {
     type: "start" | "result";
@@ -225,6 +226,7 @@ export async function runBatch(option: RunOptions): Promise<void> {
     let planned = 0;
     let skipped = 0;
     try {
+        await reportBatch(batchId);
         for (let round = 1; round <= runProfile.repeatCount; round++) {
             const orderedList = seededShuffle(caseIdList, runProfile.seed + round);
             for (const caseId of orderedList) {
@@ -288,11 +290,13 @@ export async function runBatch(option: RunOptions): Promise<void> {
                 const lineList = await readResultLineList(batchDir);
                 const last = [...lineList].reverse().find((line) => line.type === "result");
                 console.log(`[done] ${caseId} repeat ${round} -> ${last?.status ?? "unknown"}`);
+                await reportBatch(batchId);
             }
             if (cancelRequested) break;
         }
     } finally {
         process.off("SIGINT", onSigint);
+        await reportBatch(batchId);
     }
 
     console.log(
@@ -300,6 +304,7 @@ export async function runBatch(option: RunOptions): Promise<void> {
             ? `batch ${batchId} canceled after ${planned} attempt(s)`
             : `batch ${batchId} finished: ${planned} attempt(s) run, ${skipped} skipped as completed`,
     );
+    console.log(`Markdown report saved to ${join(batchDir, "report.md")}`);
 }
 
 function spawnAttempt(

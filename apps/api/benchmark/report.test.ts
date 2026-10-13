@@ -136,9 +136,9 @@ describe("summarizeBatch", () => {
 
     test("report text mentions failed statuses alongside latency", () => {
         const text = renderReportText("batch-fixture", recordList);
-        expect(text).toContain("failed:1");
-        expect(text).toContain("a__1");
-        expect(text).toContain("2.0s");
+        expect(text).toContain("Failed 1");
+        expect(text).toContain("a\\_\\_1");
+        expect(text).toContain("2.0 s");
     });
 
     test("uses sender token totals including compression from saved attempts", () => {
@@ -201,7 +201,7 @@ describe("summarizeBatch", () => {
             changedFileCount: null,
         });
         expect(summarizeGroupList(summarizeBatch(recordList))[0]?.medianChangedFileCount).toBeNull();
-        expect(renderReportText("legacy", recordList)).toMatch(/a__1\s+unknown\s+-\s+interrupted:1/);
+        expect(renderReportText("legacy", recordList)).toContain("| a\\_\\_1 | unknown | - | - | Interrupted 1 |");
         const zero = record({
             caseId: "zero",
             repeatIndex: 1,
@@ -270,9 +270,9 @@ describe("compareBatch", () => {
         expect(regression.side).toBe("candidate");
         expect(regression.status).toEqual({ incomplete: 1 });
         const text = renderCompareText("base", "cand", result);
-        expect(text).toContain("Non completed attempts");
-        expect(text).toContain("incomplete:1");
-        expect(text).toContain("Cases without a completed pair");
+        expect(text).toContain("Non completed attempt");
+        expect(text).toContain("Incomplete 1");
+        expect(text).toContain("PR without a completed pair");
     });
 
     test("rejects the same case and repeat when frozen input differs", () => {
@@ -300,6 +300,79 @@ describe("compareBatch", () => {
         expect(result.medianRelativeChange).toBe(-0.5);
         expect(result.rowList.find((entry) => entry.caseId === "a__1")).toMatchObject({ project: "proj", bucket: "S" });
         expect(result.regressionList.find((entry) => entry.caseId === "a__1")?.status).toEqual({ interrupted: 1 });
+    });
+});
+
+describe("Markdown report", () => {
+    test("shows the fixed plan and attempt history without treating a retry as another planned review", () => {
+        const text = renderReportText(
+            "partial",
+            [
+                { ...interruptedRecord, statusReason: "process-exited-before-terminal-record" },
+                record({ caseId: "a__1", repeatIndex: 1, attemptIndex: 2 }),
+            ],
+            {
+                profileName: "full",
+                repeatCount: 3,
+                caseIdList: ["a__1", "b__2"],
+                modelName: "fixture-model",
+                modelProvider: "fixture-provider",
+                caseInfoList: [
+                    {
+                        caseId: "b__2",
+                        project: "grafana",
+                        addedLineCount: 200,
+                        deletedLineCount: 10,
+                        changedFileCount: 5,
+                    },
+                ],
+            },
+        );
+        expect(text).toContain("| Planned review | Recorded attempt | Completed attempt | Awaiting result |");
+        expect(text).toContain("| 6 | 2 | 1 | 5 |");
+        expect(text).toContain("| b\\_\\_2 | M | 210 | 5 | Awaiting result 3 | - | - |");
+        expect(text).toContain("Completed 1, Interrupted 1, Awaiting result 2");
+        expect(text).toContain("| Model | fixture-provider / fixture-model |");
+        expect(text).toContain("| a\\_\\_1 | 1,000 | 100 | 50 | 5 |");
+        expect(text).toContain("Process ended without a final result");
+        expect(text).toContain("<details>");
+        expect(text).not.toMatch(/\{\{\w+\}\}/);
+    });
+
+    test("escapes Markdown cell content and only renders explicit metadata fields", () => {
+        const meta = {
+            modelName: "model | extra\n<script>bad</script>",
+            apiKey: "must-stay-private",
+            modelBaseUrl: "https://must-stay-private@example.com",
+        };
+        const text = renderReportText("batch|name", [record({ caseId: "case|name", repeatIndex: 1 })], meta);
+        expect(text).toContain("| Batch | batch\\|name |");
+        expect(text).toContain("model \\| extra &lt;script&gt;bad&lt;/script&gt;");
+        expect(text).not.toContain("<script>");
+        expect(text).not.toContain("must-stay-private");
+    });
+
+    test("shows partial failure timing separately from successful latency", () => {
+        const failed = record({ caseId: "failed", repeatIndex: 1, status: "incomplete", statusReason: "max-steps" });
+        const text = renderReportText("failed-batch", [failed]);
+        expect(text).toContain("| failed | S | 80 | 3 | Incomplete 1 | - | - |");
+        expect(text).toContain("| failed | 1 | 1 | Incomplete | 1.0 s | Agent step limit reached |");
+    });
+
+    test("writes a report before the first result exists", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "proval-bench-empty-report-"));
+        try {
+            const batchDir = join(dir, "output", "empty");
+            await mkdir(batchDir, { recursive: true });
+            await writeFile(join(batchDir, "run.json"), JSON.stringify({ caseIdList: ["pending"], repeatCount: 3 }));
+            const result = await runCommand(dir, ["report", "empty"]);
+            expect(result.exitCode).toBe(0);
+            expect(result.stdout).toContain("| 3 | 0 | 0 | 3 |");
+            expect(result.stdout).toContain("| pending | unknown | - | - | Awaiting result 3 | - | - |");
+            expect(await readFile(join(batchDir, "report.md"), "utf-8")).toBe(result.stdout);
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
     });
 });
 
@@ -332,18 +405,19 @@ describe("case metadata in saved batch output", () => {
             const originalResult = await readFile(resultPath, "utf-8");
             const report = await runCommand(dir, ["report", "candidate"]);
             expect(report.exitCode).toBe(0);
-            expect(report.stdout).toMatch(/grafana\s+M\s+1\s+1/);
-            expect(report.stdout).toMatch(/a__1\s+M\s+5\s+completed:1 interrupted:1\s+1\.0s/);
+            expect(report.stdout).toContain("| grafana | M | 1 | 1 |");
+            expect(report.stdout).toContain("| a\\_\\_1 | M | 210 | 5 | Completed 1, Interrupted 1 | 1.0 s |");
+            expect(await readFile(join(dir, "output", "candidate", "report.md"), "utf-8")).toBe(report.stdout);
             const comparison = await runCommand(dir, ["compare", "base", "candidate"]);
             expect(comparison.exitCode).toBe(0);
-            expect(comparison.stdout).toMatch(/a__1\s+M\s+1\s+1\.0s\s+1\.0s\s+0\.0%/);
+            expect(comparison.stdout).toContain("| a\\_\\_1 | M | 1 | 1.0 s | 1.0 s | 0.0% |");
             expect(await readFile(resultPath, "utf-8")).toBe(originalResult);
 
             // Static information remains available even when no attempt completes.
             await writeResult("candidate", [interruptedRecord]);
             const interrupted = await runCommand(dir, ["report", "candidate"]);
             expect(interrupted.exitCode).toBe(0);
-            expect(interrupted.stdout).toMatch(/a__1\s+M\s+5\s+interrupted:1/);
+            expect(interrupted.stdout).toContain("| a\\_\\_1 | M | 210 | 5 | Interrupted 1 |");
 
             // Older output has no snapshot and must use available attempt metadata.
             await writeFile(
@@ -353,11 +427,11 @@ describe("case metadata in saved batch output", () => {
             await writeResult("candidate", [interruptedRecord, { ...completed, ...caseInfo }]);
             const legacy = await runCommand(dir, ["report", "candidate"]);
             expect(legacy.exitCode).toBe(0);
-            expect(legacy.stdout).toMatch(/a__1\s+M\s+5\s+completed:1 interrupted:1/);
+            expect(legacy.stdout).toContain("| a\\_\\_1 | M | 210 | 5 | Completed 1, Interrupted 1 |");
             await writeResult("candidate", [interruptedRecord]);
             const unknown = await runCommand(dir, ["report", "candidate"]);
             expect(unknown.exitCode).toBe(0);
-            expect(unknown.stdout).toMatch(/a__1\s+unknown\s+-\s+interrupted:1/);
+            expect(unknown.stdout).toContain("| a\\_\\_1 | unknown | - | - | Interrupted 1 |");
         } finally {
             await rm(dir, { recursive: true, force: true });
         }
@@ -378,7 +452,7 @@ describe("compare command", () => {
                 await writeFile(join(batchDir, "result.jsonl"), JSON.stringify({ ...entry, type: "result" }) + "\n");
             };
             await writeBatch(baselineDir, "fixture-manifest", baseline);
-            const comparisonPath = join(candidateDir, "compare-base.txt");
+            const comparisonPath = join(candidateDir, "compare-base.md");
             await writeFile(comparisonPath, "previous comparison");
             for (const [manifestHash, entry, expectedError] of [
                 ["changed-manifest", baseline, "frozen manifest differs"],
@@ -394,7 +468,7 @@ describe("compare command", () => {
                     expect(stderr).toContain(expectedError);
                     expect(await readFile(comparisonPath, "utf-8")).toBe("previous comparison");
                 } else {
-                    expect(stdout).toContain("a__1");
+                    expect(stdout).toContain("a\\_\\_1");
                     expect(await readFile(comparisonPath, "utf-8")).toContain("0.0%");
                 }
             }

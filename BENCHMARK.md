@@ -4,14 +4,6 @@ Measures the real Proval review agent with a real model against the frozen
 Martian offline review benchmark dataset. Every review runs against a local
 Git workspace through MockProvider, so no comment ever leaves the machine.
 
-## Layout
-
-- `manifest.json` frozen input, 50 PRs with exact commit identifiers. Committed.
-- `profile.json` run profiles and safe model settings. Committed.
-- `data/` git cache, workdirs, databases, and batch output. Gitignored.
-- `dataset.ts` Step 1 import, `prepare.ts` Step 2 git input, `attempt.ts`
-  child runner, `run.ts` batch parent, `report.ts` report and compare.
-
 ## Configuration
 
 Model credentials come from `.env.benchmark` at the repo root, see
@@ -46,6 +38,25 @@ bun run benchmark list
 - `warm` sends one tiny request so model warm up stays outside measurement.
 - `run` executes a batch. `quick` is ten PRs once each, `full` is all 50 PRs
   three times each (150 planned attempts).
+- `report` generates a readable `report.md` from existing batch output.
+- `compare` generates `compare-<baseline>.md` in the candidate batch directory.
+
+## Reading a result
+
+Open `apps/api/benchmark/data/output/<batchId>/report.md` in a Markdown preview.
+The runner creates it at startup, updates it after each attempt, and refreshes
+it when the batch finishes or is gracefully canceled. To regenerate a report
+for an existing batch, run `bun run benchmark report <batchId>`.
+
+The report shows the model, planned workload, recorded outcome, review speed
+by project and PR size, and a result row for each PR. Phase timing and token
+usage are available in an expandable section. A separate table lists every
+non completed attempt with its elapsed time and reason. Awaiting result counts
+planned reviews without a terminal record, including any active review.
+
+Edit the Markdown template to change the layout or short explanatory text.
+The runner fills each named placeholder with a table. Raw JSON remains the
+source for reproducibility and comparison.
 
 ## Batch execution
 
@@ -95,7 +106,7 @@ Everything lives under `apps/api/benchmark/data/output/<batchId>/`.
 - `attempt/<runId>/review.json` posted comments, inline comments, emoji
   evaluation, review units, and sub agent handoffs.
 - `attempt/<runId>/event.jsonl` buffered diagnostic events.
-- `report.txt` and `compare-<baseline>.txt` rendered tables.
+- `report.md` and `compare-<baseline>.md` readable Markdown reports.
 
 Attempt status is one of `completed`, `incomplete`, `failed`,
 `prepareFailed`, `canceled`, `interrupted`. Incomplete covers step budget

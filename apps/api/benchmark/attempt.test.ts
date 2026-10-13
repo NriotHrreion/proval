@@ -212,6 +212,11 @@ describe("batch resume with fake sender", () => {
         expect(JSON.parse(originalMeta).caseInfoList).toEqual([
             { caseId: "fixture__1", project: "fixture", addedLineCount: 1, deletedLineCount: 1, changedFileCount: 2 },
         ]);
+        const markdown = await readFile(join(batchDir, "report.md"), "utf-8");
+        expect(markdown).toContain("# Proval benchmark");
+        expect(markdown).toContain("| fixture\\_\\_1 | S | 2 | 2 | Completed 1 |");
+        expect(markdown).toContain("| 1 | 1 | 1 | 0 |");
+        expect(markdown).not.toContain("{{");
         const resumeArgList = ["quick", "--case", "fixture__1", "--resume"];
         const resumed = await run(resumeArgList, {
             LLM_API_KEY: "rotated",

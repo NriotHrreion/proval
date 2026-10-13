@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { OUTPUT_DIR } from "./git.js";
 import type { AttemptStatus, PhaseTiming, SenderStat, SubAgentMeasure } from "./measure.js";
@@ -29,6 +30,23 @@ export type AttemptRecord = {
 
 type CaseInfo = Pick<AttemptRecord, "caseId" | "project" | "addedLineCount" | "deletedLineCount" | "changedFileCount">;
 
+type BatchMeta = {
+    profileName?: string;
+    repeatCount?: number;
+    caseIdList?: string[];
+    caseInfoList?: CaseInfo[];
+    modelName?: string;
+    modelProvider?: string;
+    startedAt?: string;
+    machineDescription?: string;
+    provalCommit?: string;
+    isDirty?: boolean;
+    manifestHash?: string;
+};
+
+const reportTemplate = readFileSync(join(import.meta.dir, "templates", "report.template.md"), "utf-8");
+const compareTemplate = readFileSync(join(import.meta.dir, "templates", "compare.template.md"), "utf-8");
+
 export type SizeBucket = "S" | "M" | "L" | "XL" | "BZ" | "unknown";
 
 function isKnownCount(value: number | undefined): value is number {
@@ -58,6 +76,7 @@ export type CaseSummary = {
     project: string;
     bucket: SizeBucket;
     changedFileCount: number | null;
+    changedLineCount: number | null;
     attemptCount: number;
     statusCount: Record<string, number>;
     completedMsList: number[];
@@ -88,7 +107,9 @@ function medianOf(
     return median(recordList.map(pick).filter((value): value is number => typeof value === "number"));
 }
 
-function summarizeCaseInfo(recordList: AttemptRecord[]): Pick<CaseSummary, "project" | "bucket" | "changedFileCount"> {
+function summarizeCaseInfo(
+    recordList: CaseInfo[],
+): Pick<CaseSummary, "project" | "bucket" | "changedFileCount" | "changedLineCount"> {
     const sizeRecord = recordList.find(
         (record) => sizeBucket(record.addedLineCount, record.deletedLineCount) !== "unknown",
     );
@@ -96,11 +117,13 @@ function summarizeCaseInfo(recordList: AttemptRecord[]): Pick<CaseSummary, "proj
         project: recordList.find((record) => record.project?.trim())?.project ?? "unknown",
         bucket: sizeBucket(sizeRecord?.addedLineCount, sizeRecord?.deletedLineCount),
         changedFileCount: recordList.find((record) => isKnownCount(record.changedFileCount))?.changedFileCount ?? null,
+        changedLineCount: sizeRecord ? (sizeRecord.addedLineCount ?? 0) + (sizeRecord.deletedLineCount ?? 0) : null,
     };
 }
 
-export function summarizeCase(recordList: AttemptRecord[]): CaseSummary {
-    const first = recordList[0]!;
+export function summarizeCase(recordList: AttemptRecord[], caseInfo?: CaseInfo): CaseSummary {
+    const caseId = caseInfo?.caseId ?? recordList[0]?.caseId;
+    if (!caseId) throw new Error("Cannot summarize a case without an identifier");
     const completedList = recordList.filter((record) => record.status === "completed");
     const completedMsList = completedList
         .map((record) => record.timing?.reviewMs)
@@ -111,8 +134,8 @@ export function summarizeCase(recordList: AttemptRecord[]): CaseSummary {
         if (value !== null) medianTiming[key] = value;
     }
     return {
-        caseId: first.caseId,
-        ...summarizeCaseInfo(recordList),
+        caseId,
+        ...summarizeCaseInfo(caseInfo ? [caseInfo, ...recordList] : recordList),
         attemptCount: recordList.length,
         statusCount: countByStatus(recordList),
         completedMsList,
@@ -142,15 +165,16 @@ export function summarizeCase(recordList: AttemptRecord[]): CaseSummary {
     };
 }
 
-export function summarizeBatch(recordList: AttemptRecord[]): CaseSummary[] {
-    const byCaseMap = new Map<string, AttemptRecord[]>();
+export function summarizeBatch(recordList: AttemptRecord[], caseInfoList: CaseInfo[] = []): CaseSummary[] {
+    const caseInfoById = new Map(caseInfoList.map((info) => [info.caseId, info]));
+    const byCaseMap = new Map<string, AttemptRecord[]>(caseInfoList.map((info) => [info.caseId, []]));
     for (const record of recordList) {
         const list = byCaseMap.get(record.caseId) ?? [];
         list.push(record);
         byCaseMap.set(record.caseId, list);
     }
-    return [...byCaseMap.values()]
-        .map(summarizeCase)
+    return [...byCaseMap.entries()]
+        .map(([caseId, list]) => summarizeCase(list, caseInfoById.get(caseId)))
         .sort((a, b) => (a.caseId < b.caseId ? -1 : a.caseId > b.caseId ? 1 : 0));
 }
 
@@ -309,171 +333,253 @@ export function compareBatch(baselineList: AttemptRecord[], candidateList: Attem
 
 function formatMs(value: number | null): string {
     if (value === null) return "-";
-    if (value >= 60_000) return `${(value / 60_000).toFixed(1)}m`;
-    return `${(value / 1000).toFixed(1)}s`;
+    if (value < 1000) return `${Math.round(value)} ms`;
+    if (value >= 60_000) return `${(value / 60_000).toFixed(1)} min`;
+    return `${(value / 1000).toFixed(1)} s`;
 }
 
 function formatCount(value: number | null): string {
-    return value === null ? "-" : String(Math.round(value));
+    return value === null ? "-" : Math.round(value).toLocaleString("en-US");
 }
 
+const statusLabel: Record<string, string> = {
+    completed: "Completed",
+    incomplete: "Incomplete",
+    failed: "Failed",
+    prepareFailed: "Preparation failed",
+    canceled: "Canceled",
+    interrupted: "Interrupted",
+};
+
 function formatStatus(statusCount: Record<string, number>): string {
-    return Object.entries(statusCount)
-        .sort(([a], [b]) => (a < b ? -1 : 1))
-        .map(([status, count]) => `${status}:${count}`)
-        .join(" ");
+    return (
+        Object.entries(statusCount)
+            .sort(([a], [b]) => (a < b ? -1 : 1))
+            .map(([status, count]) => `${statusLabel[status] ?? status} ${count}`)
+            .join(", ") || "No recorded attempt"
+    );
+}
+
+function markdownText(value: string): string {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/[\\`*_[\]{}!#|]/g, "\\$&")
+        .replace(/\r\n|\r|\n/g, " ");
 }
 
 function renderTable(headerList: string[], rowList: string[][]): string {
-    const widthList = headerList.map((header, index) =>
-        Math.max(header.length, ...rowList.map((row) => (row[index] ?? "").length)),
-    );
-    const line = (cellList: string[]) =>
-        cellList
-            .map((cell, index) => (cell ?? "").padEnd(widthList[index]!))
-            .join("  ")
-            .trimEnd();
-    return [line(headerList), line(widthList.map((width) => "-".repeat(width))), ...rowList.map(line)].join("\n");
+    if (rowList.length === 0) return "None.";
+    const line = (cellList: string[]) => `| ${cellList.map(markdownText).join(" | ")} |`;
+    return [line(headerList), line(headerList.map(() => "---")), ...rowList.map(line)].join("\n");
 }
 
-export function renderReportText(batchId: string, recordList: AttemptRecord[]): string {
-    const caseSummaryList = summarizeBatch(recordList);
-    const groupList = summarizeGroupList(caseSummaryList);
-    const sectionList: string[] = [];
-    sectionList.push(`# Benchmark report ${batchId}`);
-    sectionList.push(`attempts ${recordList.length}  cases ${caseSummaryList.length}`);
-    sectionList.push(
-        `status total: ${formatStatus(
-            recordList.reduce<Record<string, number>>((acc, record) => {
-                acc[record.status] = (acc[record.status] ?? 0) + 1;
-                return acc;
-            }, {}),
-        )}`,
-    );
+function fillTemplate(template: string, valueByName: Record<string, string>): string {
+    return template
+        .replace(/\{\{(\w+)\}\}/g, (_match, name: string) => {
+            if (!Object.hasOwn(valueByName, name)) throw new Error(`Missing report template value ${name}`);
+            return valueByName[name] ?? "";
+        })
+        .trim();
+}
 
-    sectionList.push("## Group summary (project x size)");
-    sectionList.push(
-        renderTable(
-            ["project", "size", "cases", "done", "status", "files(med)", "reviewMs(med)", "range"],
+export function renderReportText(batchId: string, recordList: AttemptRecord[], meta: BatchMeta = {}): string {
+    const caseInfoById = new Map((meta.caseInfoList ?? []).map((info) => [info.caseId, info]));
+    const planCaseIdList = meta.caseIdList ?? [...caseInfoById.keys()];
+    const caseSummaryList = summarizeBatch(
+        recordList,
+        planCaseIdList.map((caseId) => caseInfoById.get(caseId) ?? { caseId }),
+    );
+    const groupList = summarizeGroupList(caseSummaryList);
+    const repeatCount = meta.repeatCount;
+    const hasPlan = isKnownCount(repeatCount) && repeatCount > 0 && planCaseIdList.length > 0;
+    const awaitingByCase = new Map<string, number>();
+    if (hasPlan) {
+        for (const caseId of planCaseIdList) {
+            const endedRepeatSet = new Set(
+                recordList
+                    .filter(
+                        (record) =>
+                            record.caseId === caseId &&
+                            Number.isInteger(record.repeatIndex) &&
+                            record.repeatIndex >= 1 &&
+                            record.repeatIndex <= repeatCount,
+                    )
+                    .map((record) => record.repeatIndex),
+            );
+            awaitingByCase.set(caseId, repeatCount - endedRepeatSet.size);
+        }
+    }
+    const statusCount = countByStatus(recordList);
+    const reasonLabel: Record<string, string> = {
+        "max-steps": "Agent step limit reached",
+        "coverage-miss": "Changed file not covered",
+        "missing-summary": "No summary posted",
+        "review-error": "Review failed",
+        "runner-error": "Runner failed",
+        "prepare-error": "Input preparation failed",
+        "user-cancel": "Canceled by user",
+        "job-canceled": "Activity canceled",
+        "process-exited-before-terminal-record": "Process ended without a final result",
+    };
+    return fillTemplate(reportTemplate, {
+        runTable: renderTable(
+            ["Run", "Value"],
+            [
+                ["Batch", batchId],
+                ["Profile", meta.profileName ?? "-"],
+                ["Model", [meta.modelProvider, meta.modelName].filter(Boolean).join(" / ") || "-"],
+                ["Started", meta.startedAt ?? "-"],
+                ["Machine", meta.machineDescription ?? "-"],
+                [
+                    "Code",
+                    meta.provalCommit
+                        ? `${meta.provalCommit.slice(0, 12)}${meta.isDirty ? " with local changes" : ""}`
+                        : "-",
+                ],
+            ],
+        ),
+        progressTable: renderTable(
+            ["Planned review", "Recorded attempt", "Completed attempt", "Awaiting result"],
+            [
+                [
+                    formatCount(hasPlan ? planCaseIdList.length * repeatCount : null),
+                    formatCount(recordList.length),
+                    formatCount(statusCount.completed ?? 0),
+                    formatCount(hasPlan ? [...awaitingByCase.values()].reduce((sum, count) => sum + count, 0) : null),
+                ],
+            ],
+        ),
+        statusTable: renderTable(
+            ["Outcome", "Attempt count"],
+            Object.entries(statusCount).map(([status, count]) => [statusLabel[status] ?? status, formatCount(count)]),
+        ),
+        groupTable: renderTable(
+            ["Project", "Size", "PR count", "With success", "Median review", "Range"],
             groupList.map((group) => [
                 group.project,
                 group.bucket,
                 String(group.caseCount),
                 String(group.completedCaseCount),
-                formatStatus(group.statusCount),
-                formatCount(group.medianChangedFileCount),
                 formatMs(group.medianOfCaseMedianMs),
-                `${formatMs(group.minCaseMedianMs)}..${formatMs(group.maxCaseMedianMs)}`,
+                group.minCaseMedianMs === null
+                    ? "-"
+                    : `${formatMs(group.minCaseMedianMs)} to ${formatMs(group.maxCaseMedianMs)}`,
             ]),
         ),
-    );
-
-    sectionList.push("## Case detail");
-    sectionList.push(
-        renderTable(
-            [
-                "case",
-                "size",
-                "files",
-                "status",
-                "reviewMs(med)",
-                "range",
-                "setup",
-                "plan",
-                "subWall",
-                "writing",
-                "inTok",
-                "outTok",
-                "cachedTok",
-                "req",
-                "units",
-                "outputs",
-            ],
+        caseTable: renderTable(
+            ["PR", "Size", "Changed line", "File", "Outcome", "Median review", "Range"],
+            caseSummaryList.map((summary) => {
+                const awaiting = awaitingByCase.get(summary.caseId) ?? 0;
+                const outcome =
+                    [
+                        summary.attemptCount ? formatStatus(summary.statusCount) : "",
+                        awaiting ? `Awaiting result ${awaiting}` : "",
+                    ]
+                        .filter(Boolean)
+                        .join(", ") || "No recorded attempt";
+                return [
+                    summary.caseId,
+                    summary.bucket,
+                    formatCount(summary.changedLineCount),
+                    formatCount(summary.changedFileCount),
+                    outcome,
+                    formatMs(summary.medianReviewMs),
+                    summary.minReviewMs === null
+                        ? "-"
+                        : `${formatMs(summary.minReviewMs)} to ${formatMs(summary.maxReviewMs)}`,
+                ];
+            }),
+        ),
+        phaseTable: renderTable(
+            ["PR", "Setup", "Plan", "Parallel review", "Writing", "Finalize"],
             caseSummaryList.map((summary) => [
                 summary.caseId,
-                summary.bucket,
-                formatCount(summary.changedFileCount),
-                formatStatus(summary.statusCount),
-                formatMs(summary.medianReviewMs),
-                `${formatMs(summary.minReviewMs)}..${formatMs(summary.maxReviewMs)}`,
-                formatMs(summary.medianTiming.setupMs ?? null),
-                formatMs(summary.medianTiming.planMs ?? null),
-                formatMs(summary.medianTiming.subWallMs ?? null),
-                formatMs(summary.medianTiming.writingMs ?? null),
+                ...(["setupMs", "planMs", "subWallMs", "writingMs", "finalizeMs"] as const).map((key) =>
+                    formatMs(summary.medianTiming[key] ?? null),
+                ),
+            ]),
+        ),
+        tokenTable: renderTable(
+            ["PR", "Input token", "Output token", "Cached input", "Successful request"],
+            caseSummaryList.map((summary) => [
+                summary.caseId,
                 formatCount(summary.medianInputToken),
                 formatCount(summary.medianOutputToken),
                 formatCount(summary.medianCachedInputToken),
                 formatCount(summary.medianRequestCount),
-                formatCount(summary.medianReviewUnitCount),
-                formatCount(summary.medianOutputCount),
             ]),
         ),
-    );
-    return sectionList.join("\n\n");
+        issueTable: renderTable(
+            ["PR", "Repeat", "Attempt", "Status", "Review elapsed", "Reason"],
+            recordList
+                .filter((record) => record.status !== "completed")
+                .map((record) => [
+                    record.caseId,
+                    String(record.repeatIndex),
+                    String(record.attemptIndex),
+                    statusLabel[record.status] ?? record.status,
+                    formatMs(record.timing?.reviewMs ?? null),
+                    reasonLabel[record.statusReason ?? ""] ?? record.statusReason ?? "-",
+                ]),
+        ),
+    });
 }
 
 export function renderCompareText(baselineId: string, candidateId: string, result: CompareResult): string {
-    const sectionList: string[] = [];
-    sectionList.push(`# Benchmark compare ${baselineId} -> ${candidateId}`);
-    sectionList.push(
-        result.rowList.length === 0
-            ? "no completed case pairs to compare"
-            : `paired cases ${result.rowList.length}  median relative change ${
-                  result.medianRelativeChange === null ? "-" : `${(result.medianRelativeChange * 100).toFixed(1)}%`
-              }`,
-    );
-    if (result.rowList.length > 0) {
-        sectionList.push(
-            renderTable(
-                ["case", "size", "pairs", "baseline", "candidate", "change"],
-                result.rowList.map((row) => [
-                    row.caseId,
-                    row.bucket,
-                    String(row.pairCount),
-                    formatMs(row.baselineMedianMs),
-                    formatMs(row.candidateMedianMs),
-                    `${(row.relativeChange * 100).toFixed(1)}%`,
-                ]),
-            ),
-        );
-    }
-    if (result.regressionList.length > 0) {
-        sectionList.push("## Non completed attempts (must be disclosed with any speed claim)");
-        sectionList.push(
-            renderTable(
-                ["case", "side", "status"],
-                result.regressionList.map((item) => [item.caseId, item.side, formatStatus(item.status)]),
-            ),
-        );
-    }
-    if (result.unpairedList.length > 0) {
-        sectionList.push("## Cases without a completed pair");
-        sectionList.push(
-            renderTable(
-                ["case", "baseline", "candidate"],
-                result.unpairedList.map((item) => [
-                    item.caseId,
-                    formatStatus(item.baselineStatus),
-                    formatStatus(item.candidateStatus),
-                ]),
-            ),
-        );
-    }
-    return sectionList.join("\n\n");
+    return fillTemplate(compareTemplate, {
+        runTable: renderTable(
+            ["Role", "Batch"],
+            [
+                ["Baseline", baselineId],
+                ["Candidate", candidateId],
+            ],
+        ),
+        summary:
+            result.rowList.length === 0
+                ? "No completed PR pair to compare."
+                : `${result.rowList.length} paired PRs. Median change ${result.medianRelativeChange === null ? "-" : `${(result.medianRelativeChange * 100).toFixed(1)}%`}.`,
+        comparisonTable: renderTable(
+            ["PR", "Size", "Pair count", "Baseline", "Candidate", "Change"],
+            result.rowList.map((row) => [
+                row.caseId,
+                row.bucket,
+                String(row.pairCount),
+                formatMs(row.baselineMedianMs),
+                formatMs(row.candidateMedianMs),
+                `${(row.relativeChange * 100).toFixed(1)}%`,
+            ]),
+        ),
+        issueTable: renderTable(
+            ["PR", "Side", "Outcome"],
+            result.regressionList.map((item) => [item.caseId, item.side, formatStatus(item.status)]),
+        ),
+        unpairedTable: renderTable(
+            ["PR", "Baseline", "Candidate"],
+            result.unpairedList.map((item) => [
+                item.caseId,
+                formatStatus(item.baselineStatus),
+                formatStatus(item.candidateStatus),
+            ]),
+        ),
+    });
 }
 
-export async function loadBatchRecordList(batchId: string): Promise<AttemptRecord[]> {
+async function loadBatchData(batchId: string): Promise<{ meta: BatchMeta; recordList: AttemptRecord[] }> {
     const batchDir = join(OUTPUT_DIR, batchId);
-    const [content, metaContent] = await Promise.all([
-        readFile(join(batchDir, "result.jsonl"), "utf-8"),
-        readFile(join(batchDir, "run.json"), "utf-8").catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return "{}";
+    const readOptional = (name: string, fallback: string) =>
+        readFile(join(batchDir, name), "utf-8").catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return fallback;
             throw error;
-        }),
+        });
+    const [content, metaContent] = await Promise.all([
+        readOptional("result.jsonl", ""),
+        readOptional("run.json", "{}"),
     ]);
-    const meta = JSON.parse(metaContent) as { caseInfoList?: CaseInfo[] };
+    const meta = JSON.parse(metaContent) as BatchMeta;
     const caseInfoById = new Map((meta.caseInfoList ?? []).map((info) => [info.caseId, info]));
-    return content
+    const recordList = content
         .split("\n")
         .filter(Boolean)
         .map((line) => JSON.parse(line) as AttemptRecord & { type: string })
@@ -481,7 +587,6 @@ export async function loadBatchRecordList(batchId: string): Promise<AttemptRecor
         .map((record) => {
             const info = caseInfoById.get(record.caseId);
             if (!info) return record;
-            // Static case information comes from the batch snapshot, independent of attempt status.
             return {
                 ...record,
                 project: info.project,
@@ -490,26 +595,28 @@ export async function loadBatchRecordList(batchId: string): Promise<AttemptRecor
                 changedFileCount: info.changedFileCount,
             };
         });
+    return { meta, recordList };
+}
+
+export async function loadBatchRecordList(batchId: string): Promise<AttemptRecord[]> {
+    return (await loadBatchData(batchId)).recordList;
 }
 
 export async function reportBatch(batchId: string): Promise<string> {
-    const recordList = await loadBatchRecordList(batchId);
-    const text = renderReportText(batchId, recordList);
-    await writeFile(join(OUTPUT_DIR, batchId, "report.txt"), `${text}\n`);
+    const { meta, recordList } = await loadBatchData(batchId);
+    const text = renderReportText(batchId, recordList, meta);
+    await writeFile(join(OUTPUT_DIR, batchId, "report.md"), `${text}\n`);
     return text;
 }
 
 export async function compareBatchById(baselineId: string, candidateId: string): Promise<string> {
-    const baselineMeta = JSON.parse(await readFile(join(OUTPUT_DIR, baselineId, "run.json"), "utf-8"));
-    const candidateMeta = JSON.parse(await readFile(join(OUTPUT_DIR, candidateId, "run.json"), "utf-8"));
-    const baselineList = await loadBatchRecordList(baselineId);
-    const candidateList = await loadBatchRecordList(candidateId);
+    const [baseline, candidate] = await Promise.all([loadBatchData(baselineId), loadBatchData(candidateId)]);
     assertSameManifest([
-        baselineMeta.manifestHash,
-        candidateMeta.manifestHash,
-        ...comparisonManifestHashList([...baselineList, ...candidateList]),
+        baseline.meta.manifestHash,
+        candidate.meta.manifestHash,
+        ...comparisonManifestHashList([...baseline.recordList, ...candidate.recordList]),
     ]);
-    const text = renderCompareText(baselineId, candidateId, compareBatch(baselineList, candidateList));
-    await writeFile(join(OUTPUT_DIR, candidateId, `compare-${baselineId}.txt`), `${text}\n`);
+    const text = renderCompareText(baselineId, candidateId, compareBatch(baseline.recordList, candidate.recordList));
+    await writeFile(join(OUTPUT_DIR, candidateId, `compare-${baselineId}.md`), `${text}\n`);
     return text;
 }
