@@ -56,6 +56,17 @@ export interface AgentRunResult {
     usage: ActivityTokenUsage;
 }
 
+export type AgentLoopEvent =
+    | { type: "request-retry"; attempt: number; status: number | null }
+    | { type: "compression"; reason: "proactive" | "overflow" }
+    | {
+          type: "loop-end";
+          outcome: "completed" | "max-steps";
+          stepCount: number;
+          toolCallCount: Record<string, number>;
+          elapsedMs: number;
+      };
+
 export async function runAgentLoop(
     sender: LlmSender,
     system: string,
@@ -77,6 +88,8 @@ export async function runAgentLoop(
         endWhenRequiredToolsCalled?: boolean;
         activityId: number;
         onUsage?: (usage: ActivityTokenUsage) => Promise<void>;
+        /** Optional diagnostic event sink. Production calls omit it and keep their behavior. */
+        onEvent?: (event: AgentLoopEvent) => void;
     },
 ): Promise<AgentRunResult> {
     const startedAt = performance.now();
@@ -137,6 +150,7 @@ export async function runAgentLoop(
 
             if (currentContextLength > compressThreshold && messages.length > 2) {
                 logAgent(activityId, "compressing context (proactive)", label);
+                options.onEvent?.({ type: "compression", reason: "proactive" });
                 const summary = await compressMessages(sender, messages, options.onUsage);
                 messages.splice(2);
                 messages.push({
@@ -181,6 +195,7 @@ export async function runAgentLoop(
                         }
 
                         logAgent(activityId, "compressing context (overflow)", label);
+                        options.onEvent?.({ type: "compression", reason: "overflow" });
                         const summary = await compressMessages(sender, messages, options.onUsage);
                         messages.splice(2);
                         messages.push({
@@ -209,6 +224,11 @@ export async function runAgentLoop(
                         throw error;
                     }
 
+                    options.onEvent?.({
+                        type: "request-retry",
+                        attempt: i + 1,
+                        status: typeof status === "number" ? status : null,
+                    });
                     logAgentError(activityId, "agent loop failed", error, label);
                     logAgent(activityId, `→ retrying… ${i + 1}/3`, label);
 
@@ -258,6 +278,13 @@ export async function runAgentLoop(
                     toolCallCount,
                     usage,
                 };
+                options.onEvent?.({
+                    type: "loop-end",
+                    outcome: "completed",
+                    stepCount,
+                    toolCallCount: { ...toolCallCount },
+                    elapsedMs: performance.now() - startedAt,
+                });
                 logAgentResult(activityId, label, result, performance.now() - startedAt, "completed");
                 return result;
             }
@@ -273,6 +300,13 @@ export async function runAgentLoop(
                     toolCallCount,
                     usage,
                 };
+                options.onEvent?.({
+                    type: "loop-end",
+                    outcome: "max-steps",
+                    stepCount,
+                    toolCallCount: { ...toolCallCount },
+                    elapsedMs: performance.now() - startedAt,
+                });
                 logAgent(activityId, `stopping at max steps (${maxSteps})`, label);
                 logAgentResult(activityId, label, result, performance.now() - startedAt, "max_steps");
                 return result;
@@ -368,9 +402,16 @@ export async function runAgentLoop(
                     finalMessage: response.message.content,
                     messages,
                     stepCount,
-                    toolCallCount,
+                    toolCallCount: { ...toolCallCount },
                     usage,
                 };
+                options.onEvent?.({
+                    type: "loop-end",
+                    outcome: "completed",
+                    stepCount,
+                    toolCallCount: { ...toolCallCount },
+                    elapsedMs: performance.now() - startedAt,
+                });
                 logAgent(activityId, "every required tool has been called, ending the loop", label);
                 logAgentResult(activityId, label, result, performance.now() - startedAt, "completed");
                 return result;
