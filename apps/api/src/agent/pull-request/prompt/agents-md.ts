@@ -11,7 +11,11 @@ const PR_OVERFLOW_NOTICE =
     "Additional target branch guidance was omitted due to the context or file count limit. File tools read the PR head and cannot load omitted target branch guidance.";
 const BRANCH_OVERFLOW_NOTICE = "Additional guidance on this branch was omitted due to the context or file count limit.";
 
-export async function buildAgentInstructionPrompt(workspace: Workspace, activityId: number): Promise<string> {
+export async function buildAgentInstructionPrompt(
+    workspace: Workspace,
+    activityId: number,
+    label: string,
+): Promise<string> {
     const isPullRequest = workspace.isPullRequest();
     const incompleteContentNotice = isPullRequest ? PR_INCOMPLETE_CONTENT_NOTICE : BRANCH_INCOMPLETE_CONTENT_NOTICE;
     const overflowNotice = isPullRequest ? PR_OVERFLOW_NOTICE : BRANCH_OVERFLOW_NOTICE;
@@ -21,13 +25,12 @@ export async function buildAgentInstructionPrompt(workspace: Workspace, activity
         "Shallower guidance takes precedence over deeper guidance when they conflict. Deeper guidance may add conventions that do not conflict with parent guidance. Proval workflow, evidence requirements and repository owner settings take precedence over file guidance.",
     ].join("\n\n");
     const changedFileList = isPullRequest ? await workspace.changedFiles() : [];
-    const result = await workspace.loadAgentInstructionList(changedFileList, activityId);
+    const result = await workspace.loadAgentInstructionList(changedFileList, activityId, label);
     const selectedFileList: {
         file: WorkspaceAgentInstruction;
         section: string[];
         overheadCharacterCount: number;
     }[] = [];
-    const label = "Repository guidance";
     // Reserve the full header and overflow notice before selecting any file
     let remainingCharacterCount = TOTAL_CHARACTER_LIMIT - contextHeader.length - overflowNotice.length - 2;
     let hasOverflow = result.hasOverflow;

@@ -322,7 +322,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
 
         it("ignores other spellings and unrelated directories", async () => {
             await withGuidance({ "Agents.md": "wrong case", "other/AGENTS.md": "unrelated" }, async (workspace) => {
-                expect(await workspace.loadAgentInstructionList([changed("src/a.ts")], 0)).toEqual({
+                expect(await workspace.loadAgentInstructionList([changed("src/a.ts")], 0, "Setup")).toEqual({
                     fileList: [],
                     hasOverflow: false,
                 });
@@ -347,6 +347,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                 const { fileList } = await workspace.loadAgentInstructionList(
                     [changed("AGENTS.md"), changed("src/a.ts")],
                     0,
+                    "Setup",
                 );
                 expect(fileList.map((file) => file.path)).toEqual(["AGENTS.md", "src/agents.md"]);
                 expect(fileList[0].state).toBe(body === null ? "unavailable" : body.trim() ? "loaded" : "empty");
@@ -376,6 +377,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                             changed("gone/AGENTS.md", { deletedFile: true }),
                         ],
                         0,
+                        "Setup",
                     );
                     expect(fileList.map((file) => file.path)).toEqual([
                         "agents.md",
@@ -397,7 +399,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                 await git(dir, ["commit", "-m", "symlink"]);
                 const sha = await git(dir, ["rev-parse", "HEAD"]);
                 workspace.setVersion({ headSha: sha, baseSha: sha });
-                const { fileList } = await workspace.loadAgentInstructionList([changed("src/a.ts")], 0);
+                const { fileList } = await workspace.loadAgentInstructionList([changed("src/a.ts")], 0, "Setup");
                 expect(fileList[0].state).toBe("unavailable");
                 expect(fileList[1].body).toBe("source");
             });
@@ -408,15 +410,17 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                 const oid = await git(dir, ["rev-parse", "HEAD:AGENTS.md"]);
                 // This is a loose object inside the verified temporary fixture directory
                 await rm(join(dir, ".git", "objects", oid.slice(0, 2), oid.slice(2)));
-                const { fileList } = await workspace.loadAgentInstructionList([changed("src/a.ts")], 0);
+                const { fileList } = await workspace.loadAgentInstructionList([changed("src/a.ts")], 0, "Setup");
                 expect(fileList[0].state).toBe("unavailable");
                 expect(fileList[1].body).toBe("source");
                 expect(await workspace.read("AGENTS.md")).toBe("root");
 
                 workspace.setVersion({ headSha: await git(dir, ["rev-parse", "HEAD"]), baseSha: "0".repeat(40) });
-                expect((await workspace.loadAgentInstructionList([], 0)).fileList).toEqual([]);
+                expect((await workspace.loadAgentInstructionList([], 0, "Setup")).fileList).toEqual([]);
                 workspace.setVersion({ headSha: await git(dir, ["rev-parse", "HEAD"]) });
-                await expect(workspace.loadAgentInstructionList([], 0)).rejects.toThrow("target head is not loaded");
+                await expect(workspace.loadAgentInstructionList([], 0, "Setup")).rejects.toThrow(
+                    "target head is not loaded",
+                );
             });
         });
 
@@ -427,7 +431,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                     throw new Error("Unexpected read");
                 });
                 try {
-                    const { fileList } = await workspace.loadAgentInstructionList([], 0);
+                    const { fileList } = await workspace.loadAgentInstructionList([], 0, "Setup");
                     expect(fileList[0].body).toBe(content);
                     expect(fileList[0].state).toBe("loaded");
                     expect(readSpy).not.toHaveBeenCalled();
@@ -451,12 +455,12 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                 ] as const) {
                     await writeFile(join(dir, "AGENTS.md"), content);
                     await commitGuidance(workspace, dir);
-                    const { fileList } = await workspace.loadAgentInstructionList([], 0);
+                    const { fileList } = await workspace.loadAgentInstructionList([], 0, "Setup");
                     expect(fileList[0].body).toBe(body);
                     expect(fileList[0].state).toBe(state);
                 }
                 const { buildAgentInstructionPrompt } = await import("../agent/pull-request/prompt/agents-md.js");
-                const prompt = await buildAgentInstructionPrompt(workspace, 0);
+                const prompt = await buildAgentInstructionPrompt(workspace, 0, "Setup");
                 expect(prompt).toContain("a".repeat(7999));
                 expect(prompt).not.toContain("😀");
                 expect(prompt).toContain("Content truncated");
@@ -467,7 +471,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
             await withGuidance({ "AGENTS.md": "root rule", "src/agents.md": "nested rule" }, async (workspace) => {
                 expect(workspace.isPullRequest()).toBe(false);
                 const { buildAgentInstructionPrompt } = await import("../agent/pull-request/prompt/agents-md.js");
-                const prompt = await buildAgentInstructionPrompt(workspace, 0);
+                const prompt = await buildAgentInstructionPrompt(workspace, 0, "Setup");
                 expect(prompt).toContain("root rule");
                 expect(prompt).toContain("checked out branch");
                 expect(prompt).not.toContain("nested rule");
@@ -481,7 +485,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                 fileMap[`dir${String(index).padStart(2, "0")}/AGENTS.md`] = "x".repeat(100_000);
             await withGuidance(fileMap, async (workspace, dir) => {
                 const changedFileList = Object.keys(fileMap).map((path) => changed(path));
-                const { fileList, hasOverflow } = await workspace.loadAgentInstructionList(changedFileList, 0);
+                const { fileList, hasOverflow } = await workspace.loadAgentInstructionList(changedFileList, 0, "Setup");
                 expect(fileList).toHaveLength(32);
                 expect(hasOverflow).toBe(true);
                 expect(fileList.every((file) => file.state === "loaded" && file.body.length === 100_000)).toBe(true);
@@ -492,7 +496,7 @@ if (process.env.PROVAL_WORKSPACE_TEST_CHILD !== "1") {
                     baseSha: headSha,
                 });
                 const { buildAgentInstructionPrompt } = await import("../agent/pull-request/prompt/agents-md.js");
-                const prompt = await buildAgentInstructionPrompt(workspace, 0);
+                const prompt = await buildAgentInstructionPrompt(workspace, 0, "Setup");
                 expect(prompt.length).toBeLessThanOrEqual(32_000);
                 expect(prompt).toContain("Additional target branch guidance was omitted");
                 expect(prompt).not.toContain("UNTRUSTED_INPUT_START");

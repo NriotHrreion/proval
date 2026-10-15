@@ -331,6 +331,7 @@ export class Workspace {
     public async loadAgentInstructionList(
         changedFileList: GitChangedFile[],
         activityId: number,
+        label: string,
     ): Promise<{ fileList: WorkspaceAgentInstruction[]; hasOverflow: boolean }> {
         this.isWorkspaceLoaded();
         if (!this.targetHeadSha) throw new Error("Workspace target head is not loaded.");
@@ -346,13 +347,12 @@ export class Workspace {
                 }
             }
         }
-        
+
         const directoryList = [...directorySet].sort((a, b) => {
             const depth = (path: string) => (path ? path.split("/").length : 0);
             return depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0);
         });
         const fileList: WorkspaceAgentInstruction[] = [];
-        const label = "Repository guidance";
         let hasOverflow = false;
         const entryMap = new Map<string, { path: string; mode: string; oid: string }>();
         try {

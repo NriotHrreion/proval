@@ -49,7 +49,7 @@ export const runPullRequestCommentReply: PullRequestCommentReply = async ({
             baseSha,
         });
 
-        const agentInstructionPrompt = await buildAgentInstructionPrompt(workspace, activityId);
+        const agentInstructionPrompt = await buildAgentInstructionPrompt(workspace, activityId, label);
         const system = [
             PR_REPLY_BODY,
             PR_REPLY_WORKFLOW,

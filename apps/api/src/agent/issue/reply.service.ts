@@ -42,7 +42,7 @@ export const runIssueReply: IssueReply = async ({
         const repository = await provider.fetchRepositoryDetail();
         await workspace.loadFromBranch(repository.defaultBranch);
 
-        const agentInstructionPrompt = await buildAgentInstructionPrompt(workspace, activityId);
+        const agentInstructionPrompt = await buildAgentInstructionPrompt(workspace, activityId, label);
         const system = [
             ISSUE_BASE_PROMPT,
             ISSUE_REPLY_WORKFLOW,

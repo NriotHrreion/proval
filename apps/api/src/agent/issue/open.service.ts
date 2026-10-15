@@ -42,7 +42,7 @@ export const runIssueReplyOnOpen: IssueReplyOnOpen = async ({
         const repositoryLabelList = issueLabelOnOpenEnabled ? await provider.fetchRepositoryLabelList() : [];
         const hasRepositoryLabelList = repositoryLabelList.length > 0;
 
-        const agentInstructionPrompt = await buildAgentInstructionPrompt(workspace, activityId);
+        const agentInstructionPrompt = await buildAgentInstructionPrompt(workspace, activityId, label);
         const system = [
             ISSUE_BASE_PROMPT,
             buildIssueReplyOnOpenWorkflow(hasRepositoryLabelList),

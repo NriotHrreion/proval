@@ -27,6 +27,7 @@ export interface Message {
     content: string | null;
     toolCalls?: ToolCall[];
     toolCallId?: string;
+    responseOutputList?: unknown[];
 }
 
 export interface LlmResponse {
@@ -264,7 +265,7 @@ export async function runAgentLoop(
                     const missingToolNameList = requiredToolNameList.filter(
                         (toolName) => toolCallCount[toolName] === undefined || toolCallCount[toolName] === 0,
                     );
-                    messages.push({ role: "assistant", content: response.message.content });
+                    messages.push(response.message);
                     messages.push({
                         role: "user",
                         content: `[Required tool not called: ${missingToolNameList.join(", ")}]`,
@@ -312,11 +313,7 @@ export async function runAgentLoop(
                 return result;
             }
 
-            messages.push({
-                role: "assistant",
-                content: response.message.content,
-                toolCalls: response.message.toolCalls,
-            });
+            messages.push(response.message);
 
             logAgent(activityId, `step ${stepCount}: ${response.message.toolCalls.length} tool call(s)`, label);
 
